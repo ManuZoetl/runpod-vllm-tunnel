@@ -14,6 +14,28 @@ VLLM_PORT="${VLLM_PORT:-8000}"
 AUTO_TP="${AUTO_TP:-true}"
 TP_OVERRIDE="${TP_OVERRIDE:-${VLLM_TP_SIZE:-}}"
 
+# Default vLLM command used when the container is started without explicit args.
+# Every default can be overridden with env vars, so Vast/RunPod templates do not
+# need to create a separate on-start script just to pass the vLLM command.
+VLLM_MODEL="${VLLM_MODEL:-${MODEL:-Qwen/Qwen3.6-35B-A3B-FP8}}"
+VLLM_SERVED_MODEL_NAME="${VLLM_SERVED_MODEL_NAME:-qwen3p6}"
+VLLM_HOST="${VLLM_HOST:-0.0.0.0}"
+VLLM_MAX_MODEL_LEN="${VLLM_MAX_MODEL_LEN:-${MAX_MODEL_LEN:-131072}}"
+VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-${GPU_MEMORY_UTILIZATION:-0.92}}"
+VLLM_MAX_NUM_SEQS="${VLLM_MAX_NUM_SEQS:-${MAX_NUM_SEQS:-1}}"
+VLLM_MAX_NUM_BATCHED_TOKENS="${VLLM_MAX_NUM_BATCHED_TOKENS:-${MAX_NUM_BATCHED_TOKENS:-8192}}"
+VLLM_KV_CACHE_DTYPE="${VLLM_KV_CACHE_DTYPE:-fp8}"
+VLLM_REASONING_PARSER="${VLLM_REASONING_PARSER:-qwen3}"
+VLLM_TOOL_CALL_PARSER="${VLLM_TOOL_CALL_PARSER:-qwen3_coder}"
+VLLM_SAFETENSORS_LOAD_STRATEGY="${VLLM_SAFETENSORS_LOAD_STRATEGY:-prefetch}"
+VLLM_GENERATION_CONFIG="${VLLM_GENERATION_CONFIG:-vllm}"
+DEFAULT_LIMIT_MM_PER_PROMPT='{"image":3,"video":0}'
+VLLM_LIMIT_MM_PER_PROMPT="${VLLM_LIMIT_MM_PER_PROMPT:-${LIMIT_MM_PER_PROMPT:-$DEFAULT_LIMIT_MM_PER_PROMPT}}"
+
+VLLM_ENABLE_CHUNKED_PREFILL="${VLLM_ENABLE_CHUNKED_PREFILL:-true}"
+VLLM_ENABLE_PREFIX_CACHING="${VLLM_ENABLE_PREFIX_CACHING:-true}"
+VLLM_ENABLE_AUTO_TOOL_CHOICE="${VLLM_ENABLE_AUTO_TOOL_CHOICE:-true}"
+
 has_arg() {
   local key="$1"
   shift
@@ -82,14 +104,47 @@ choose_tensor_parallel_size() {
   esac
 }
 
-# RunPod may pass the whole start command as one string.
+# RunPod/Vast may pass the whole start command as one string.
 # This converts it into normal argv tokens while preserving quoted JSON args.
-if [[ "$#" -eq 1 && "$1" == *"--model"* ]]; then
+if [[ "$#" -eq 1 && "$1" == *" "* ]]; then
   echo "Detected single-string start command. Expanding arguments..."
   eval "set -- $1"
 fi
 
-VLLM_ARGS=("$@")
+if [[ "$#" -eq 0 ]]; then
+  echo "No explicit vLLM args provided. Building default Qwen3.6 command from environment."
+
+  VLLM_ARGS=(
+    "$VLLM_MODEL"
+    --served-model-name "$VLLM_SERVED_MODEL_NAME"
+    --host "$VLLM_HOST"
+    --port "$VLLM_PORT"
+    --max-model-len "$VLLM_MAX_MODEL_LEN"
+    --gpu-memory-utilization "$VLLM_GPU_MEMORY_UTILIZATION"
+    --max-num-seqs "$VLLM_MAX_NUM_SEQS"
+    --max-num-batched-tokens "$VLLM_MAX_NUM_BATCHED_TOKENS"
+    --kv-cache-dtype "$VLLM_KV_CACHE_DTYPE"
+    --reasoning-parser "$VLLM_REASONING_PARSER"
+    --tool-call-parser "$VLLM_TOOL_CALL_PARSER"
+    --limit-mm-per-prompt "$VLLM_LIMIT_MM_PER_PROMPT"
+    --safetensors-load-strategy "$VLLM_SAFETENSORS_LOAD_STRATEGY"
+    --generation-config "$VLLM_GENERATION_CONFIG"
+  )
+
+  if [[ "$VLLM_ENABLE_CHUNKED_PREFILL" == "true" ]]; then
+    VLLM_ARGS+=(--enable-chunked-prefill)
+  fi
+
+  if [[ "$VLLM_ENABLE_PREFIX_CACHING" == "true" ]]; then
+    VLLM_ARGS+=(--enable-prefix-caching)
+  fi
+
+  if [[ "$VLLM_ENABLE_AUTO_TOOL_CHOICE" == "true" ]]; then
+    VLLM_ARGS+=(--enable-auto-tool-choice)
+  fi
+else
+  VLLM_ARGS=("$@")
+fi
 
 if [[ "${AUTO_TP}" == "true" ]]; then
   if has_arg "--tensor-parallel-size" "${VLLM_ARGS[@]}" || has_arg "--tp" "${VLLM_ARGS[@]}"; then
