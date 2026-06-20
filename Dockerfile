@@ -13,7 +13,9 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 COPY start-with-tunnel.sh /usr/local/bin/start-with-tunnel.sh
+COPY entrypoint-with-ssh.sh /usr/local/bin/entrypoint-with-ssh.sh
 RUN chmod +x /usr/local/bin/start-with-tunnel.sh
+RUN chmod +x /usr/local/bin/entrypoint-with-ssh.sh
 
-ENTRYPOINT ["/usr/local/bin/start-with-tunnel.sh"]
+ENTRYPOINT ["/usr/local/bin/entrypoint-with-ssh.sh"]
 CMD []
