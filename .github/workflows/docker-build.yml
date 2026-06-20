@@ -29,4 +29,4 @@ jobs:
           context: .
           push: true
           platforms: linux/amd64
-          tags: manuztl/vllm-qwen3p6-tunnel:0.2
+          tags: manuztl/vllm-qwen3p6-tunnel:0.3
