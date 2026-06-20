@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-echo "=== ArbitraIQ RunPod vLLM Tunnel Starter ==="
+echo "=== ArbitraIQ RunPod/Vast vLLM Tunnel Starter ==="
 
 : "${VLLM_API_KEY:?VLLM_API_KEY missing}"
 : "${RUNPOD_TUNNEL_PRIVATE_KEY_B64:?RUNPOD_TUNNEL_PRIVATE_KEY_B64 missing}"
@@ -11,24 +11,54 @@ echo "=== ArbitraIQ RunPod vLLM Tunnel Starter ==="
 VPS_PORT="${VPS_PORT:-22}"
 VPS_REMOTE_PORT="${VPS_REMOTE_PORT:-18080}"
 VLLM_PORT="${VLLM_PORT:-8000}"
+
 AUTO_TP="${AUTO_TP:-true}"
 TP_OVERRIDE="${TP_OVERRIDE:-${VLLM_TP_SIZE:-}}"
 
-# Default vLLM command used when the container is started without explicit args.
-# Every default can be overridden with env vars, so Vast/RunPod templates do not
-# need to create a separate on-start script just to pass the vLLM command.
+# -------------------------------------------------------------------
+# Default vLLM command
+# -------------------------------------------------------------------
+# These defaults mirror the currently working RunPod command:
+#
+# --model Qwen/Qwen3.6-35B-A3B-FP8
+# --max-model-len 220000
+# --tensor-parallel-size 1      <-- intentionally NOT hardcoded here
+# --gpu-memory-utilization 0.97
+# --max-num-seqs 2
+# --max-num-batched-tokens 8192
+# --kv-cache-dtype fp8
+# --enable-chunked-prefill
+# --enable-prefix-caching
+# --reasoning-parser qwen3
+# --tool-call-parser qwen3_coder
+# --enable-auto-tool-choice
+# --limit-mm-per-prompt '{"image":3,"video":0}'
+# --safetensors-load-strategy prefetch
+# --generation-config vllm
+# --download-dir /workspace/huggingface
+# --served-model-name qwen3p6
+# --host 0.0.0.0
+# --port 8000
+#
+# Every value can be overridden with environment variables.
+# -------------------------------------------------------------------
+
 VLLM_MODEL="${VLLM_MODEL:-${MODEL:-Qwen/Qwen3.6-35B-A3B-FP8}}"
 VLLM_SERVED_MODEL_NAME="${VLLM_SERVED_MODEL_NAME:-qwen3p6}"
 VLLM_HOST="${VLLM_HOST:-0.0.0.0}"
-VLLM_MAX_MODEL_LEN="${VLLM_MAX_MODEL_LEN:-${MAX_MODEL_LEN:-131072}}"
-VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-${GPU_MEMORY_UTILIZATION:-0.92}}"
-VLLM_MAX_NUM_SEQS="${VLLM_MAX_NUM_SEQS:-${MAX_NUM_SEQS:-1}}"
+
+VLLM_MAX_MODEL_LEN="${VLLM_MAX_MODEL_LEN:-${MAX_MODEL_LEN:-220000}}"
+VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-${GPU_MEMORY_UTILIZATION:-0.97}}"
+VLLM_MAX_NUM_SEQS="${VLLM_MAX_NUM_SEQS:-${MAX_NUM_SEQS:-2}}"
 VLLM_MAX_NUM_BATCHED_TOKENS="${VLLM_MAX_NUM_BATCHED_TOKENS:-${MAX_NUM_BATCHED_TOKENS:-8192}}"
+
 VLLM_KV_CACHE_DTYPE="${VLLM_KV_CACHE_DTYPE:-fp8}"
 VLLM_REASONING_PARSER="${VLLM_REASONING_PARSER:-qwen3}"
 VLLM_TOOL_CALL_PARSER="${VLLM_TOOL_CALL_PARSER:-qwen3_coder}"
 VLLM_SAFETENSORS_LOAD_STRATEGY="${VLLM_SAFETENSORS_LOAD_STRATEGY:-prefetch}"
 VLLM_GENERATION_CONFIG="${VLLM_GENERATION_CONFIG:-vllm}"
+VLLM_DOWNLOAD_DIR="${VLLM_DOWNLOAD_DIR:-${DOWNLOAD_DIR:-/workspace/huggingface}}"
+
 DEFAULT_LIMIT_MM_PER_PROMPT='{"image":3,"video":0}'
 VLLM_LIMIT_MM_PER_PROMPT="${VLLM_LIMIT_MM_PER_PROMPT:-${LIMIT_MM_PER_PROMPT:-$DEFAULT_LIMIT_MM_PER_PROMPT}}"
 
@@ -115,10 +145,7 @@ if [[ "$#" -eq 0 ]]; then
   echo "No explicit vLLM args provided. Building default Qwen3.6 command from environment."
 
   VLLM_ARGS=(
-    "$VLLM_MODEL"
-    --served-model-name "$VLLM_SERVED_MODEL_NAME"
-    --host "$VLLM_HOST"
-    --port "$VLLM_PORT"
+    --model "$VLLM_MODEL"
     --max-model-len "$VLLM_MAX_MODEL_LEN"
     --gpu-memory-utilization "$VLLM_GPU_MEMORY_UTILIZATION"
     --max-num-seqs "$VLLM_MAX_NUM_SEQS"
@@ -129,6 +156,10 @@ if [[ "$#" -eq 0 ]]; then
     --limit-mm-per-prompt "$VLLM_LIMIT_MM_PER_PROMPT"
     --safetensors-load-strategy "$VLLM_SAFETENSORS_LOAD_STRATEGY"
     --generation-config "$VLLM_GENERATION_CONFIG"
+    --download-dir "$VLLM_DOWNLOAD_DIR"
+    --served-model-name "$VLLM_SERVED_MODEL_NAME"
+    --host "$VLLM_HOST"
+    --port "$VLLM_PORT"
   )
 
   if [[ "$VLLM_ENABLE_CHUNKED_PREFILL" == "true" ]]; then
@@ -143,6 +174,7 @@ if [[ "$#" -eq 0 ]]; then
     VLLM_ARGS+=(--enable-auto-tool-choice)
   fi
 else
+  echo "Explicit vLLM args provided. Using provided args."
   VLLM_ARGS=("$@")
 fi
 
@@ -170,6 +202,10 @@ if [[ "${AUTO_TP}" == "true" ]]; then
 else
   echo "AUTO_TP=false; not modifying tensor parallel size."
 fi
+
+echo "Final vLLM args:"
+printf '  %q' "${VLLM_ARGS[@]}"
+echo
 
 echo "Preparing SSH key..."
 mkdir -p /root/.ssh
@@ -217,7 +253,7 @@ done
 
 echo "vLLM is healthy."
 echo "Starting reverse SSH tunnel:"
-echo "VPS 127.0.0.1:${VPS_REMOTE_PORT} -> RunPod 127.0.0.1:${VLLM_PORT}"
+echo "VPS 127.0.0.1:${VPS_REMOTE_PORT} -> Pod 127.0.0.1:${VLLM_PORT}"
 
 while true; do
   ssh -i /root/.ssh/runpod_tunnel_key \
